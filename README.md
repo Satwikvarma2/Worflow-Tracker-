@@ -1,18 +1,21 @@
-# Revenue Reporting Workflow Automation & SLA Dashboard
+# Workflow Monitoring & SLA Analytics Dashboard
 
 ## Project Overview
 
-This project is a **workflow automation and monitoring dashboard** built to track the end-to-end publish lifecycle across multiple tenants and systems. The primary goal is to provide visibility into **when publishes complete** and **when upstream data becomes available**, enabling the team to quickly diagnose SLA misses with evidence — e.g., *"Upstream data was not available until X time, which is why the SLA was missed."*
+This project is a **workflow automation and monitoring dashboard** built to track the end-to-end publish lifecycle across multiple systems.
+
+The primary goal is to provide visibility into **when publishes complete** and **when upstream data becomes available**, enabling the team to quickly diagnose SLA misses with evidence — e.g.,
+*"Upstream data was not available until X time, which is why the SLA was missed."*
 
 ---
 
 ## Problem Statement
 
-We have a large number of pipelines, runbooks, and systems across different tenants. When an SLA is missed, there is no single view to answer:
+We have a large number of pipelines, workflows, and systems across distributed environments. When an SLA is missed, there is no single view to answer:
 
-- **When did the upstream data become available?**
-- **When did the publish actually complete?**
-- **Which step in the pipeline caused the delay?**
+* **When did the upstream data become available?**
+* **When did the publish actually complete?**
+* **Which step in the pipeline caused the delay?**
 
 This dashboard consolidates all of that information into one place, making SLA root-cause analysis straightforward.
 
@@ -20,90 +23,73 @@ This dashboard consolidates all of that information into one place, making SLA r
 
 ## Architecture
 
-### Tenants
+### Layers
 
-| Tenant | Purpose |
-|--------|---------|
-| **PME** (Publishing & Monitoring Engine) | Orchestration tenant — kicks off and tracks the distribution pipeline (CORP runbooks, data copy, parquet publishing) |
-| **CORP** (Corporate) | Execution tenant — runs the core E2E runbooks, Synapse pipelines, and stores pipeline telemetry in SQL |
+| Layer                   | Purpose                                      |
+| ----------------------- | -------------------------------------------- |
+| **Orchestration Layer** | Triggers workflows and coordinates execution |
+| **Execution Layer**     | Runs pipelines, jobs, and processing tasks   |
+| **Monitoring Layer**    | Collects logs and telemetry for analysis     |
 
-### Systems & Components
+---
+
+## Systems & Components
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                             Tenant -1                            │
-│                                                                  │
-│  ┌─────────────────────────────────────┐                         │
-│  │  PME Automation Account (Runbook)   │                         │
-│  │  - KickOff CORP Runbooks            │                         │
-│  │  - Sync Shards / Factory / Mart     │                         │
-│  │  - Copy Parquets                    │                         │
-│  │                                     │                         │
-│  │  - Track CORP Runbook Completion    │                         │
-│  └─────────────────┬───────────────────┘                         │
-│                     │ triggers                                   │
-└─────────────────────┼────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│           Orchestration Layer                │
+│  - Workflow Trigger                         │
+│  - Task Coordination                        │
+│  - Execution Tracking                       │
+└─────────────────────┬────────────────────────┘
                       │
                       ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                         CORP Tenant                              │
-│                                                                  │
-│  ┌─────────────────────────────────────┐                         │
-│  │  CORP Automation Account (Runbook)  │                         │
-│  │  - E2E Publish Pipeline tasks       │                         │
-│  │  - FDL Restore Triggers             │                         │
-│  │  - VM Start/Stop                    │                         │
-│  │  - Backup, Extract, Freeze          │                         │
-│  └─────────────────────────────────────┘                         │
-│                                                                  │
-│  ┌─────────────────────────────────────┐                         │
-│  │  Synapse Pipelines (FDL)            │                         │
-│  │  - PublishAndDistributeDelta        │                         │
-│  │  - PublishDomainDelta               │                         │
-│  │  - PublishPerspective               │                         │
-│  │  - DistributePerspective            │                         │
-│  │  - PublishDomainsDB                 │                         │
-│  │  - GLGeoMR                          │                         │
-│  │  - Inventory                        │                         │
-│  └─────────────────────────────────────┘                         │
-│                                                                  │
-│  ┌─────────────────────────────────────┐                         │
-│  │  SQL Server (MSSDomainPRD)          │                         │
-│  │  [Platform].[Telemetry]             │                         │
-│  │      .[PipelineDetail_Archive]      │                         │
-│  │  - Stores CORP runbook task logs    │                         │
-│  └─────────────────────────────────────┘                         │
-└──────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│             Execution Layer                  │
+│  - Data Pipelines                           │
+│  - Batch Processing Jobs                    │
+│  - Data Transformation Tasks                │
+│  - Data Distribution                        │
+└─────────────────────┬────────────────────────┘
+                      │
+                      ▼
+┌──────────────────────────────────────────────┐
+│             Monitoring Layer                │
+│  - Pipeline Logs                            │
+│  - Execution Metrics                        │
+│  - Publish Timestamps                       │
+│  - Telemetry Storage                        │
+└──────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Data Sources
 
-The dashboard is powered by **4 CSV data files**, each pulled from a different log source:
+The dashboard is powered by **4 structured datasets**, each pulled from a different log source:
 
-| # | Data File | What It Contains | Tenant | Collection Method | Source System |
-|---|-----------|-----------------|--------|-------------------|---------------|
-| 1 | **CORP_Runbooks_Run_Summary.csv** | CORP runbook task runs (task name, status, start/end times, avg runtime) | CORP | **SQL Pipeline** | SQL: `MSSDomainPRD [Platform].[Telemetry].[PipelineDetail_Archive]` |
-| 2 | **FDL_PublishTime.csv** | Final FDL publish timestamps + factory run mode (Daily YTD, FM Close, Restatement) | CORP | **Runbook** (KQL query) | Log Analytics: `MSSOA-LA-PROD` |
-| 3 | **FDL_Pipeline_Runtime_Summary.csv** | Synapse pipeline runs (pipeline name, start/end, duration, status, attempts) | CORP | **Runbook** (KQL query) | Log Analytics: `MSSOA-LA-PROD` |
-| 4 | **PME_Pipeline_Run_Summary.csv** | PME orchestration pipeline runs (runbook group name, start/end times) | PME | **Runbook** (KQL query) | Log Analytics: `la-finpub-revdist-prod` |
+| # | Data File                         | What It Contains                                                              |
+| - | --------------------------------- | ----------------------------------------------------------------------------- |
+| 1 | **Workflow_Run_Summary.csv**      | Workflow task execution details (task name, status, start/end times, runtime) |
+| 2 | **Publish_Timestamps.csv**        | Final publish timestamps and run modes                                        |
+| 3 | **Pipeline_Runtime_Summary.csv**  | Pipeline execution details (pipeline name, start/end, duration, status)       |
+| 4 | **Orchestration_Run_Summary.csv** | Orchestration workflow execution logs                                         |
 
-### How Data Is Collected
+---
+
+## How Data Is Collected
 
 ```
-CORP Runbook Logs ──► SQL Pipeline ──► CORP_Runbooks_Run_Summary.csv
-                                          │
-FDL Publish Times ──► CORP Runbook ──► FDL_PublishTime.csv
-                      (KQL Query)        │
-                                          │
-FDL Pipeline Runs ──► CORP Runbook ──► FDL_Pipeline_Runtime_Summary.csv
-                      (KQL Query)        │
-                                          │
-PME Pipeline Runs ──► PME Runbook  ──► PME_Pipeline_Run_Summary.csv
-                      (KQL Query)        │
-                                          ▼
-                                    Dashboard / HTML Report
+Workflow Logs ──► Extraction Process ──► Workflow_Run_Summary.csv
+                          │
+Publish Events ──► Extraction Process ──► Publish_Timestamps.csv
+                          │
+Pipeline Runs ──► Extraction Process ──► Pipeline_Runtime_Summary.csv
+                          │
+Orchestration Logs ──► Extraction Process ──► Orchestration_Run_Summary.csv
+                          │
+                          ▼
+                    Dashboard / HTML Report
 ```
 
 ---
@@ -112,113 +98,121 @@ PME Pipeline Runs ──► PME Runbook  ──► PME_Pipeline_Run_Summary.csv
 
 ### WorkflowInstanceId
 
-Every publish cycle is identified by a unique `WorkflowInstanceId` (e.g., `20418`). This ID links data across all four CSV files, allowing us to reconstruct the full timeline for a single publish run.
+Every execution cycle is identified by a unique **WorkflowInstanceId**.
+This ID links data across all datasets, allowing reconstruction of the full workflow timeline.
 
-### Factory Run Mode
+---
 
-Each publish run operates in one of three modes (from `FDL_PublishTime.csv`):
+### Run Mode
 
-| Run Mode | Description |
-|----------|-------------|
-| **Daily YTD** | Standard daily year-to-date publish |
-| **FM Close** | Fiscal month close publish |
-| **Restatement** | Ad-hoc restatement publish |
+| Run Mode           | Description                  |
+| ------------------ | ---------------------------- |
+| **Daily Run**      | Standard scheduled execution |
+| **Periodic Close** | End-of-cycle processing      |
+| **Ad-hoc Run**     | On-demand execution          |
+
+---
 
 ### Upstream Data Availability
 
-"Upstream data available" is determined by the **later** of two CORP runbook task completions:
+"Upstream data available" is determined by the **completion of critical dependency tasks** in the workflow.
 
-- `MSSales-FDL-Restore-Trigger`
-- `MSSales-FDL-LicenseMaster-Copy-Trigger`
+This timestamp is crucial for SLA analysis — if upstream data arrives late, downstream processing is delayed.
 
-This timestamp is critical for SLA analysis — if upstream data arrived late, downstream publish will also be late.
+---
 
 ### SLA Tracking
 
-Two key publish completion times are tracked:
+Two key completion metrics are tracked:
 
-| Metric | How It's Determined |
-|--------|---------------------|
-| **MSRA Publish Time** | Completion of `MSSales-E2E-Restore-Transactions-On-PrePublish-Servers` (falls back to overall runbook end) |
-| **FDL Publish Time** | From `FDL_PublishTime.csv` (falls back to max Synapse pipeline end time) |
+| Metric                       | Description                             |
+| ---------------------------- | --------------------------------------- |
+| **Primary Publish Time**     | Final workflow completion time          |
+| **Pipeline Completion Time** | Completion time of underlying pipelines |
 
 ---
 
 ## Dashboard Output
 
-The tool generates an **HTML report** (`Revenue_Reporting_Publishing_Report.html`) with:
+The system generates an **HTML report** with:
 
-1. **Trend Charts** — Publish times, upstream availability, and E2E durations over time
-2. **Gantt Charts** — Per-workflow timeline showing all PME tasks, CORP runbook tasks, and Synapse pipelines with their start/end times
-3. **SLA Analysis** — Side-by-side comparison of upstream data availability vs. publish completion
-4. **Executive Summary** — Per-workflow E2E duration, breakdown by phase (PME / Runbook / Synapse), and % deviation from average
+1. **Trend Charts** — Execution times and durations over time
+2. **Gantt Charts** — End-to-end workflow timelines
+3. **SLA Analysis** — Upstream vs publish completion comparison
+4. **Executive Summary** — Duration breakdown and performance insights
 
-### Report Tabs
+---
 
-| Tab | Filter | Max Workflows Shown |
-|-----|--------|---------------------|
-| Daily YTD | `FactoryRunMode = "Daily YTD"` | 30 |
-| FM Close | `FactoryRunMode = "FM Close"` | 15 |
-| Restatement | `FactoryRunMode = "Restatement"` | 15 |
+## Report Tabs
+
+| Tab            | Filter              | Max Workflows |
+| -------------- | ------------------- | ------------- |
+| Daily Run      | Standard executions | 30            |
+| Periodic Close | End-of-cycle runs   | 15            |
+| Ad-hoc Run     | On-demand runs      | 15            |
 
 ---
 
 ## Pipeline Flow (Simplified)
 
-```
-1. PME KickOff
-       │
-       ▼
-2. PME Sync (Shards → Factory → Mart → Perspectives)
-       │
-       ▼
-3. PME Data Copy (Big Domains, Inventory, License Master, GL, MR, Geo)
-       │
-       ▼
-4. CORP Runbooks Execute:
-   a. Start VMs
-   b. Shard Redistribution & DB Reset
-   c. FDL Restore Triggers (upstream data arrives here)
-   d. Prerequisite Extracts
-   e. Publish to Perspectives & Domains
-   f. Backup & Distribution
-   g. Restore Transactions to Pre/Post Publish Servers (MSRA SLA hit)
-   h. Stop VMs
-       │
-       ▼
-5. Synapse Pipelines Execute:
-   a. Inventory Pipeline
-   b. DomainsDB Pipeline
-   c. PublishPerspective & DistributePerspective
-   d. PublishDomainDelta & DomainDelta
-   e. PublishAndDistributeDelta (Master)
-   f. GLGeoMR Pipeline
-       │
-       ▼
-6. FDL Publish Complete (FDL SLA hit)
-       │
-       ▼
-7. PME TrackCompletion
-```
+1. Workflow Trigger Initiated
+2. Data Synchronization Steps
+3. Data Copy & Preparation
+4. Execution Layer Processing:
+
+   * Resource initialization
+   * Data extraction
+   * Transformation
+   * Publishing
+   * Backup and distribution
+5. Pipeline Execution
+6. Final Publish Completion
+7. Workflow Completion Tracking
 
 ---
 
 ## Scripts
 
-| Script | Purpose |
-|--------|---------|
-| `generate_report_v3.ps1` | Main report generator — reads all 4 CSVs, processes data, generates the HTML dashboard |
-| `new_script.ps1` | Supplementary chart — plots Fabric Publish Time vs. FDL Publish Time over time |
+| Script                   | Purpose                                                 |
+| ------------------------ | ------------------------------------------------------- |
+| generate_report.ps1      | Main script to process data and generate HTML dashboard |
+| visualization_script.ps1 | Generates trend charts and comparisons                  |
 
 ---
 
 ## SLA Root-Cause Analysis — How To Use
 
-When an SLA is missed for a given day:
+When an SLA is missed:
 
-1. **Open the dashboard** and navigate to the correct run mode tab (Daily YTD / FM Close / Restatement)
-2. **Find the workflow** for that date using the Workflow ID
-3. **Check "Upstream Data Available" time** — if it's later than expected, the delay is upstream (not our fault)
-4. **Check the Gantt chart** — identify which specific task(s) ran longer than their average (red dashed markers show the average)
-5. **Check the SLA chart** — compare MSRA Publish and FDL Publish times against the SLA target
-6. **Report with evidence** — "On [date], upstream data was not available until [time]. The normal availability is [time]. This caused a [X]-hour delay in the publish, resulting in the SLA miss."
+1. Open the dashboard
+2. Select the appropriate run mode
+3. Identify the workflow using WorkflowInstanceId
+4. Check **Upstream Data Availability Time**
+5. Analyze the Gantt chart to find delays
+6. Compare actual vs expected SLA
+7. Report findings with evidence
+
+Example:
+
+> "On [date], upstream data was available at [time], later than usual.
+> This caused a delay of [X hours], leading to an SLA miss."
+
+---
+
+## Key Benefits
+
+* Centralized monitoring across systems
+* Faster SLA root-cause identification
+* Clear visibility into workflow execution
+* Data-driven decision making
+* Reduced debugging time
+
+---
+
+## Technologies Used
+
+* Data Pipelines / Workflow Orchestration
+* Log Analytics / Monitoring Systems
+* Data Processing Scripts
+* HTML Dashboard Generation
+* Structured Data Processing (CSV-based)
